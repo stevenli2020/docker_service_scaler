@@ -8,6 +8,27 @@ def EXEC(CMD):
 	ERR_SUCCESS,OUTPUT = commands.getstatusoutput(CMD)
 	return OUTPUT
 
+def scaler():
+	global scaling_queue
+	MAX = 10
+	MIN = 2
+	while 1:
+		try:
+			# print scaling_queue
+			if len(scaling_queue) > 0:
+				(SERVICE,REPLICAS) = scaling_queue.pop(0)
+				if MIN <= REPLICAS <= MAX: 
+					EXEC("docker service scale "+SERVICE+"="+str(REPLICAS))+"\n"
+					print "Service '"+SERVICE+"' scaled to "+str(REPLICAS)
+				else:
+					print "Scaling target out of range"
+		except:
+			pass
+		time.sleep(2)	
+
+@route('/')
+def about():
+	return '\n______ _____ _____ __    _____ _____ \n|   __|     |  _  |  |  |   __| __  |\n|__   |   --|     |  |__|   __|    -|\n|_____|_____|__|__|_____|_____|__|__|\n     \nby Steven Li, September 2020 \n'	
 	
 @route('/hello')
 @route('/hello/')
@@ -72,8 +93,10 @@ def service_ps(svc):
 @post('/service/scale/<svc>/<n:int>/')
 @post('/service/scale/<svc>/<n:int>/')
 def scale(svc,n):
+	global scaling_queue
 	try:
-		EXEC("docker service scale "+svc+"="+str(n))
+		scaling_queue.append((svc,n))
+		print "Added to scaler task queue :",scaling_queue
 		return '{"result":"OK"}\n'
 	except:
 		return '{"result":"failed"}\n'
@@ -84,7 +107,7 @@ def scale(svc,n):
 @post('/service/scale/<svc>/')
 def get_scale(svc):
 	try:
-		return EXEC("docker service ps "+svc+" --format '{{.Name}}' | wc -l")+"\n"		
+		return EXEC("docker service ps -q "+svc+" -f desired-state=Running | wc -l")+"\n"		
 	except:
 		return '{"result":"failed"}\n'
 		
@@ -93,10 +116,12 @@ def get_scale(svc):
 @post('/service/scaleup/<svc>/<n:int>')
 @post('/service/scaleup/<svc>/<n:int>')
 def scaleup(svc, n):
+	global scaling_queue
 	try:      
-		N = int(n)+int(EXEC("docker service ps "+svc+" --format '{{.Name}}' | wc -l"))
-		EXEC("docker service scale "+svc+"="+str(N))
-		return '{"result":"OK","replicas":'+str(N)+'}\n'
+		N = int(n)+int(EXEC("docker service ps -q "+svc+" -f desired-state=Running | wc -l"))
+		scaling_queue.append((svc,N))
+		print "Added to scaler task queue :",scaling_queue
+		return '{"result":"OK"}\n'		
 	except:
 		return '{"result":"failed"}\n'
 		
@@ -105,12 +130,14 @@ def scaleup(svc, n):
 @post('/service/scaledown/<svc>/<n:int>')
 @post('/service/scaledown/<svc>/<n:int>')
 def scaledn(svc, n):
+	global scaling_queue
 	try:
-		N = int(EXEC("docker service ps "+svc+" --format '{{.ID}}' | wc -l")) - int(n)
+		N = int(EXEC("docker service ps -q "+svc+" -f desired-state=Running | wc -l")) - int(n)
 		if N < 2:
 			return '{"result":"error","message":"Targeted replicas smaller than 2"}\n'
-		EXEC("docker service scale "+svc+"="+str(N))
-		return '{"result":"OK","replicas":'+str(N)+'}\n'
+		scaling_queue.append((svc,N))
+		print "Added to scaler task queue :",scaling_queue
+		return '{"result":"OK"}\n'
 	except:
 		return '{"result":"failed"}\n'				
 
@@ -120,17 +147,24 @@ def scaledn(svc, n):
 @post('/service/inspect/<svc>/')
 def inspect(svc):
 	try:
-		N = int(EXEC("docker service ps "+svc+" --format '{{.ID}}' | wc -l")) - int(n)
-		if N < 2:
-			return '{"result":"error","message":"Targeted replicas smaller than 2"}\n'
-		EXEC("docker service scale "+svc+"="+str(N))
-		return '{"result":"OK","replicas":'+str(N)+'}\n'
+		SVC = svc.replace("+"," ")
+		return EXEC("docker service inspect "+SVC)+"\n"
 	except:
 		return '{"result":"failed"}\n'
-		
-print("API service started on 0.0.0.0:80")
-run(host='0.0.0.0', port=80)
+
 	
+		
+#============= MAIN ==============#	
+scaling_queue = []
+thread.start_new_thread(scaler,())
+while 1:
+	try:
+		print("API service started on 0.0.0.0:80")
+		run(host='0.0.0.0', port=80)
+	except:
+		time.sleep(2)
+		pass
+		
 	
 	
 	
